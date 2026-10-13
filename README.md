@@ -19,3 +19,6 @@
 - 계약단가표에서 매칭된 일부 행이 AI API로 전송될 수 있습니다. 사내 데이터 외부 전송 정책을 확인하세요.
 - 원본 매뉴얼 PDF는 제공되지 않아 다운로드 링크가 작동하지 않습니다. 필요하면 PDF 파일도 저장소 최상위에 올리세요.
 - 외부 Gemini API 응답/모델 접근권한/검색 grounding 조합에 따라 별도 오류가 발생할 수 있습니다. 실제 호출 성공은 배포 후 확인해야 합니다.
+
+
+2026-10-13 update: Removed responseMimeType/responseSchema to allow google_search tool. JSON output is requested via prompt instead.

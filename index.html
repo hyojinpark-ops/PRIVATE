@@ -529,60 +529,17 @@
                 if(isPart) promptText += `조건: 이 자재는 기기의 부품입니다.\n`;
                 if(filteredExcelContext) promptText += filteredExcelContext;
 
+                 // Search grounding and JSON response schema cannot be combined in this API request.
+                 // Ask for JSON in natural language instead; the existing parser handles it.
+                 promptText += `\n\n응답은 반드시 JSON 객체 하나로만 작성하세요. 마크다운 코드블록이나 부연설명은 제외하세요.
+JSON 필드: standardized_name(문자열), is_contract_item(불리언), contract_code(문자열), reasoning(문자열), is_discontinued(불리언), discontinued_info(문자열), alternative_product_name(문자열), alternative_reason(문자열), alternative_link(문자열), purchase_unit(문자열), is_bundled(불리언), bundle_warning(문자열), image_url(문자열), description(문자열), spec_details([{key,value}]), purchase_links([{mall_name,url}]), user_options([{question,key,allow_multiple,options(문자열 배열)}]). 누락값은 빈 문자열, false 또는 빈 배열로 반환하세요.`;
+
                 const parts = [{ text: promptText }];
                 
                 const payload = {
                     contents: [{ role: "user", parts: parts }],
                     tools: [{ "google_search": {} }],
-                    systemInstruction: { parts: [{ text: systemPrompt }] },
-                    generationConfig: {
-                        responseMimeType: "application/json",
-                        responseSchema: {
-                            type: "OBJECT",
-                            properties: {
-                                "standardized_name": { type: "STRING" },
-                                "is_contract_item": { type: "BOOLEAN" },
-                                "contract_code": { type: "STRING" },
-                                "reasoning": { type: "STRING" },
-                                "is_discontinued": { type: "BOOLEAN" },
-                                "discontinued_info": { type: "STRING" },
-                                "alternative_product_name": { type: "STRING" },
-                                "alternative_reason": { type: "STRING" },
-                                "alternative_link": { type: "STRING" },
-                                "purchase_unit": { type: "STRING" },
-                                "is_bundled": { type: "BOOLEAN" },
-                                "bundle_warning": { type: "STRING" },
-                                "image_url": { type: "STRING" },
-                                "description": { type: "STRING" },
-                                "spec_details": {
-                                    type: "ARRAY",
-                                    items: {
-                                        type: "OBJECT",
-                                        properties: { "key": { type: "STRING" }, "value": { type: "STRING" } }
-                                    }
-                                },
-                                "purchase_links": {
-                                    type: "ARRAY",
-                                    items: {
-                                        type: "OBJECT",
-                                        properties: { "mall_name": { type: "STRING" }, "url": { type: "STRING" } }
-                                    }
-                                },
-                                "user_options": {
-                                    type: "ARRAY",
-                                    items: {
-                                        type: "OBJECT",
-                                        properties: {
-                                            "question": { type: "STRING" },
-                                            "key": { type: "STRING" },
-                                            "allow_multiple": { type: "BOOLEAN" },
-                                            "options": { type: "ARRAY", items: { type: "STRING" } }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
+                    systemInstruction: { parts: [{ text: systemPrompt }] }
                 };
 
                 const response = await fetch(apiUrl, {
