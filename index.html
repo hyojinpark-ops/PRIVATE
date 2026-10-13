@@ -1,0 +1,809 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>자재 구매요청 표준화 도구</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500;700&display=swap');
+        body { font-family: 'Noto Sans KR', sans-serif; background-color: #f3f4f6; }
+        .spinner { border-top-color: #3b82f6; animation: spinner 1.5s linear infinite; }
+        @keyframes spinner { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        ::-webkit-scrollbar { width: 8px; }
+        ::-webkit-scrollbar-track { background: #f1f1f1; }
+        ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+        
+        /* Spec Sheet & Print Styles */
+        @media print {
+            body * { visibility: hidden; }
+            #specSheetView, #specSheetView * { visibility: visible; }
+            #specSheetView { position: absolute; left: 0; top: 0; width: 100%; background: white; }
+            .no-print { display: none !important; }
+            body { background-color: white; padding: 0; }
+        }
+        .paper { width: 210mm; min-height: 297mm; background: white; margin: 0 auto; padding: 20mm; box-shadow: 0 10px 25px rgba(0,0,0,0.1); position: relative; }
+        .spec-table th { background-color: #f1f5f9; text-align: left; font-weight: 600; padding: 12px; border: 1px solid #cbd5e1; color: #334155; }
+        .spec-table td { padding: 12px; border: 1px solid #cbd5e1; }
+        .important-box { border-left: 4px solid #ef4444; background-color: #fef2f2; }
+        @media screen and (max-width: 220mm) { .paper { width: 100%; padding: 15px; box-shadow: none; min-height: auto; } }
+    </style>
+</head>
+<body class="min-h-screen p-4 md:p-8 flex justify-center">
+
+    <div id="mainView" class="w-full max-w-4xl bg-white rounded-2xl shadow-xl overflow-hidden flex flex-col">
+        <!-- Header -->
+        <div class="bg-blue-800 p-6 text-white flex items-center justify-between">
+            <div>
+                <h1 class="text-2xl font-bold tracking-tight">자재코드 표준화 및 검색 도구</h1>
+                <p class="text-blue-200 text-sm mt-1">구매2팀 가이드라인에 맞춘 자재명 생성 및 구매처 검색</p>
+            </div>
+            <div class="flex flex-col items-end gap-3">
+                <i class="fa-solid fa-boxes-stacked text-4xl text-blue-400 opacity-80"></i>
+                <button id="guideBtn" class="text-xs bg-blue-700 hover:bg-blue-600 border border-blue-500 py-1.5 px-3 rounded shadow-sm transition-colors flex items-center gap-1">
+                    <i class="fa-solid fa-book-open"></i> 매뉴얼 요약 보기
+                </button>
+            </div>
+        </div>
+
+        <!-- Input Section -->
+        <div class="p-6 border-b border-gray-100 bg-gray-50/50">
+            <div class="space-y-5">
+                <div>
+                    <label for="rawInput" class="block text-sm font-semibold text-gray-700 mb-2">
+                        <i class="fa-solid fa-pen-clip text-blue-500 mr-1"></i> 구매하고자 하는 자재의 상세 내역 (필수)
+                    </label>
+                    <textarea id="rawInput" rows="3" class="w-full p-4 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all resize-none shadow-sm text-sm" placeholder="예: 슬링벨트 25mm 4m짜리 스마토꺼 사주세요&#10;예: 임팩트&#10;예: 북스캐너 ETMAX"></textarea>
+                </div>
+
+                <div>
+                    <label for="shopLink" class="block text-sm font-semibold text-gray-700 mb-2">
+                        <i class="fa-solid fa-link text-blue-500 mr-1"></i> 참고 쇼핑몰 링크 (선택)
+                    </label>
+                    <input type="url" id="shopLink" class="w-full p-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none text-sm shadow-sm" placeholder="https://...">
+                </div>
+
+                <div class="flex items-center gap-3 bg-white p-4 rounded-xl border border-gray-200 shadow-sm">
+                    <input type="checkbox" id="isPart" class="w-5 h-5 text-blue-600 border-gray-300 rounded focus:ring-blue-500 cursor-pointer">
+                    <label for="isPart" class="text-sm font-medium text-gray-700 cursor-pointer select-none">
+                        이 자재는 특정 기기의 '부품'입니다 (가이드라인 11번 룰 적용)
+                    </label>
+                </div>
+
+                <div class="bg-green-50 p-4 rounded-xl border border-green-200 shadow-sm">
+                    <label for="excelInput" class="block text-sm font-semibold text-green-800 mb-2">
+                        <i class="fa-solid fa-file-excel mr-1"></i> 계약 단가표 엑셀 업로드 (선택)
+                    </label>
+                    <div class="flex items-center gap-3">
+                        <input type="file" id="excelInput" accept=".xlsx, .xls, .csv" class="block w-full text-sm text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-semibold file:bg-white file:text-green-700 hover:file:bg-green-100 transition-colors cursor-pointer">
+                        <span id="excelStatus" class="text-xs text-green-700 font-medium whitespace-nowrap">업로드 시 자재코드를 우선 확인합니다.</span>
+                    </div>
+                </div>
+
+                <button id="processBtn" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-4 px-6 rounded-xl shadow-md transition-all active:scale-[0.99] flex justify-center items-center gap-2 text-lg">
+                    <i class="fa-solid fa-wand-magic-sparkles"></i> 표준화 및 검색 시작
+                </button>
+            </div>
+        </div>
+
+        <div id="loadingSection" class="hidden p-12 flex-col items-center justify-center text-center">
+            <div class="w-12 h-12 border-4 border-gray-200 border-t-blue-600 rounded-full spinner mb-4"></div>
+            <h3 class="text-lg font-bold text-gray-800">AI가 자재를 분석하고 있습니다...</h3>
+            <p class="text-sm text-gray-500 mt-2">단종 여부, 추천 링크 및 크레텍(CTX) 공구코드를 검색 중입니다.</p>
+        </div>
+
+        <div id="resultsSection" class="hidden p-6 md:p-8 bg-white flex-1 overflow-y-auto">
+            <div class="mb-4">
+                <div class="flex items-center justify-between mb-3">
+                    <h2 class="text-lg font-bold text-gray-900 flex items-center gap-2">
+                        <i class="fa-solid fa-check-circle text-green-500"></i> 표준화된 자재명
+                    </h2>
+                    <span id="byteCounter" class="text-sm font-bold px-3 py-1 rounded-full bg-blue-100 text-blue-800">0 / 40 Byte</span>
+                </div>
+                
+                <div class="relative group">
+                    <input type="text" id="resultText" class="w-full p-4 pr-12 text-lg font-medium text-gray-800 border-2 border-green-500 rounded-xl focus:ring-2 focus:ring-green-400 outline-none bg-green-50/30">
+                    <button id="copyBtn" class="absolute right-3 top-3 p-2 text-gray-400 hover:text-green-600 transition-colors" title="복사하기">
+                        <i class="fa-regular fa-copy text-xl"></i>
+                    </button>
+                </div>
+                <p id="byteWarning" class="hidden text-sm text-red-500 mt-2 font-medium"><i class="fa-solid fa-triangle-exclamation"></i> 주의: 40바이트를 초과했습니다. 줄임말을 사용하거나 일부 내용을 생략하세요.</p>
+            </div>
+
+            <!-- Dynamic User Options -->
+            <div id="interactiveOptions" class="hidden mb-6 bg-yellow-50 border border-yellow-200 rounded-xl p-5 shadow-sm">
+                <h3 class="text-sm font-bold text-yellow-900 mb-3 flex items-center gap-2">
+                    <i class="fa-solid fa-list-check text-yellow-600"></i> 정확한 발주를 위해 세부 규격을 선택해주세요. (사양서에만 반영됩니다)
+                </h3>
+                <div id="optionsContainer" class="space-y-4">
+                    <!-- Options injected here -->
+                </div>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8 mt-4">
+                <div class="bg-blue-50 rounded-xl p-5 border border-blue-100">
+                    <h3 class="text-sm font-bold text-blue-900 mb-2 flex items-center gap-2">
+                        <i class="fa-solid fa-brain text-blue-600"></i> 적용된 규칙 및 공구코드
+                    </h3>
+                    <p id="reasoningText" class="text-sm text-gray-700 leading-relaxed"></p>
+                </div>
+
+                <div class="space-y-4">
+                    <div class="bg-purple-50 rounded-xl p-5 border border-purple-100">
+                        <h3 class="text-sm font-bold text-purple-900 mb-2 flex items-center gap-2">
+                            <i class="fa-solid fa-box-open text-purple-600"></i> 구매 단위 정보
+                        </h3>
+                        <div id="unitInfo" class="text-sm text-gray-700 leading-relaxed space-y-2"></div>
+                    </div>
+
+                    <div class="bg-orange-50 rounded-xl p-5 border border-orange-100">
+                        <h3 class="text-sm font-bold text-orange-900 mb-2 flex items-center gap-2">
+                            <i class="fa-solid fa-shop text-orange-600"></i> 단종 여부 및 구매 정보
+                        </h3>
+                        <div id="marketInfo" class="text-sm text-gray-700 leading-relaxed space-y-2"></div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="border-t border-gray-200 pt-6 mt-4">
+                <div class="bg-gray-50 rounded-xl p-5 flex flex-col md:flex-row items-center justify-between border border-gray-200">
+                    <div>
+                        <h4 class="font-bold text-gray-800 mb-1">구매요청 사양서(PDF) 템플릿 열기</h4>
+                        <p class="text-xs text-gray-500">선택한 객관식 옵션과 사진이 자동 반영된 사양서를 인쇄합니다.</p>
+                    </div>
+                    <button id="openSpecSheetBtn" class="mt-4 md:mt-0 bg-white border border-gray-300 hover:bg-gray-50 text-gray-700 font-semibold py-2 px-4 rounded-lg shadow-sm transition-all flex items-center gap-2">
+                        <i class="fa-regular fa-file-pdf text-red-500"></i> 사양서 생성 및 보기
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Guide Modal -->
+    <div id="guideModal" class="hidden fixed inset-0 bg-black bg-opacity-50 z-50 flex justify-center items-center p-4">
+        <div class="bg-white rounded-xl shadow-2xl max-w-2xl w-full max-h-[90vh] flex flex-col overflow-hidden transform transition-all">
+            <div class="bg-blue-800 p-4 text-white flex justify-between items-center">
+                <h2 class="font-bold text-lg"><i class="fa-solid fa-book text-blue-300 mr-2"></i>자재코드 표준화 가이드라인</h2>
+                <button id="closeGuideBtn" class="text-white hover:text-blue-200 transition-colors">
+                    <i class="fa-solid fa-xmark text-xl"></i>
+                </button>
+            </div>
+            <div class="p-6 overflow-y-auto text-sm text-gray-700 space-y-4 leading-relaxed bg-gray-50">
+                <div class="p-3 bg-blue-50 rounded-lg border border-blue-100 font-semibold text-blue-900 shadow-sm mb-4">
+                    <p>📌 <strong class="text-blue-700">기본 형식:</strong> 제품명(색상)/구매사품명(품번),용량,단위,이외세부스펙/메이커</p>
+                    <p class="text-xs text-blue-600 mt-1 ml-6">예: 슬링벨트/25mmx4m(835-6482),0.8T/스마토</p>
+                </div>
+                
+                <ul class="list-decimal pl-5 space-y-3 bg-white p-5 border border-gray-200 rounded-lg shadow-sm text-xs text-gray-800">
+                    <li><strong class="text-gray-900">형식/순서:</strong> 제품명(색상)/구매사품명(품번), 용량, 단위(PACK-EA-BOX), 세부스펙(~용,~형)/메이커</li>
+                    <li><strong class="text-gray-900">글자수:</strong> 40바이트 이내로 통일 (한글 2바이트, 영문/특수기호 1바이트)</li>
+                    <li><strong class="text-gray-900">영문사용:</strong> 고유명사가 아닌 외국어는 가능한 한국어로 표기 (줄임말/대문자는 영문 유지)</li>
+                    <li><strong class="text-gray-900">표준어:</strong> 가능한 사전에 등록된 국문 표준어 사용 (예: 롤라 → 롤러, 니뿔 → 니플)</li>
+                    <li><strong class="text-gray-900">메이커명:</strong> 최대한 한국어로 통일 (한국어로 통용될 경우 한함. 모음은 'ㅔ' 사용. 예: 베셀, 코메론)</li>
+                    <li><strong class="text-gray-900">공구코드:</strong> 공구류의 경우 상품코드(크레텍 등 7자리)를 품번 옆 괄호에 병기</li>
+                    <li><strong class="text-gray-900">색상표기:</strong> 통일된 색상 표기 (하얀색/흰색 → 백색, 파랑색 → 청색 등)</li>
+                    <li><strong class="text-gray-900">특수기호:</strong> " 등의 기호 삭제 및 대체 (90도, 십자형, 4인치 등)</li>
+                    <li><strong class="text-gray-900">단위기호:</strong> 특수문자가 들어가는 단위기호는 알파벳으로 입력 (파이, ohm, cm2 등)</li>
+                    <li><strong class="text-gray-900">상세스펙:</strong> 사이즈 및 매수가 확인되는 제품은 최대한 작성</li>
+                    <li><strong class="text-gray-900">부품표기:</strong> 부품의 경우 기존상품의 품명을 같이 씀 ('부품'을 명기하여 오발주 혼란 방지)</li>
+                    <li><strong class="text-gray-900">띄어쓰기:</strong> 띄어쓰기 없이 작성 (의미가 변할 경우에만 띄어쓰기 사용)</li>
+                </ul>
+
+                <div class="mt-6 flex justify-end">
+                    <a href="4_표준화가이드북_구매2팀_20211104 (2).pdf" download class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2.5 px-5 rounded-lg shadow-md transition-colors flex items-center gap-2 text-sm">
+                        <i class="fa-solid fa-download"></i> 원본 매뉴얼 PDF 다운로드
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Spec Sheet SPA View -->
+    <div id="specSheetView" class="hidden w-full max-w-4xl flex-col">
+        <div class="no-print mb-4 flex justify-between items-center bg-white p-4 rounded-xl shadow-sm border border-gray-200">
+            <button id="backBtn" class="text-gray-600 hover:text-blue-600 font-bold py-2 px-4 rounded transition-colors flex items-center gap-2">
+                <i class="fa-solid fa-arrow-left"></i> 뒤로 가기
+            </button>
+            <button onclick="window.print()" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-6 rounded-lg shadow-md transition-all flex items-center gap-2">
+                <i class="fa-solid fa-print"></i> PDF 저장 / 인쇄
+            </button>
+        </div>
+        
+        <div class="paper">
+            <div class="border-b-[3px] border-slate-800 pb-4 mb-8 flex justify-between items-end">
+                <div>
+                    <p class="text-gray-500 font-semibold mb-1">자재 구매 요청 사양서</p>
+                    <h1 id="specTitle" class="text-2xl font-extrabold text-slate-800 m-0 tracking-tight" contenteditable="true">제품명을 입력하세요</h1>
+                </div>
+                <div class="text-right text-sm text-slate-600 leading-relaxed">
+                    <strong>요청일자:</strong> <span id="currentDate" contenteditable="true"></span><br>
+                    <strong>요청부서:</strong> <span contenteditable="true">구매팀</span>
+                </div>
+            </div>
+
+            <div class="flex flex-col sm:flex-row gap-6 mb-8">
+                <div class="flex-1 bg-blue-50 border border-blue-100 p-5 rounded-lg" contenteditable="true">
+                    <h3 class="font-bold text-blue-800 mb-2">제품 개요</h3>
+                    <p id="specDescription" class="text-blue-900 leading-relaxed text-sm"></p>
+                </div>
+                <!-- 사진 영역 크기 대폭 확대 (w-[320px] h-[320px]) -->
+                <div class="relative flex-shrink-0 flex items-center justify-center bg-white border border-gray-200 rounded-lg p-2 w-[320px] h-[320px] shadow-sm group cursor-pointer" onclick="document.getElementById('specImageUpload').click()" title="클릭하여 이미지 직접 변경">
+                    <img id="specImage" src="https://placehold.co/320x320/ffffff/94a3b8?text=No+Image" alt="Product Image" class="max-w-full max-h-full object-contain mix-blend-multiply rounded" onerror="this.src='https://placehold.co/320x320/ffffff/ef4444?text=No+Image'">
+                    <div class="absolute inset-0 bg-black bg-opacity-60 hidden group-hover:flex flex-col items-center justify-center rounded-lg transition-all no-print">
+                        <i class="fa-solid fa-camera text-white text-3xl mb-2"></i>
+                        <span class="text-white font-bold text-sm mt-2">클릭하여 사진 변경</span>
+                        <span class="text-white text-xs mt-1">잘못된 이미지일 경우 수정하세요</span>
+                    </div>
+                    <input type="file" id="specImageUpload" accept="image/*" class="hidden">
+                </div>
+            </div>
+
+            <h3 class="font-bold text-slate-800 mb-3 text-lg border-l-4 border-slate-800 pl-2">상세 사양</h3>
+            <table class="spec-table w-full text-sm mb-10 border-collapse">
+                <colgroup><col style="width: 30%;"><col style="width: 70%;"></colgroup>
+                <tbody id="specTableBody" contenteditable="true">
+                    <!-- Dynamic rows injected here -->
+                </tbody>
+            </table>
+
+            <div class="important-box p-6 rounded-r-lg mb-8">
+                <h3 class="font-bold text-red-700 mb-4 flex items-center gap-2">
+                    <i class="fa-solid fa-triangle-exclamation"></i> 구매 및 입고 시 특별 요청사항 (필독)
+                </h3>
+                <ul class="list-disc pl-5 space-y-2 text-red-900 text-sm font-medium" contenteditable="true">
+                    <li>정확한 규격 및 단위(EA/BOX) 확인 후 발주 요망</li>
+                    <li>대체품 입고 시 반드시 사전 협의 필요</li>
+                    <li>입고 시 거래명세서에 본 사양서의 제품명 표기 요망</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Modal Handlers
+        const guideModal = document.getElementById('guideModal');
+        const guideBtn = document.getElementById('guideBtn');
+        const closeGuideBtn = document.getElementById('closeGuideBtn');
+
+        guideBtn.addEventListener('click', () => guideModal.classList.remove('hidden'));
+        closeGuideBtn.addEventListener('click', () => guideModal.classList.add('hidden'));
+        guideModal.addEventListener('click', (e) => {
+            if (e.target === guideModal) guideModal.classList.add('hidden');
+        });
+
+        // Utils
+        function calculateBytes(str) {
+            let bytes = 0;
+            for (let i = 0; i < str.length; i++) {
+                bytes += (str.charCodeAt(i) > 127) ? 2 : 1;
+            }
+            return bytes;
+        }
+
+        function updateByteCounter(text) {
+            const bytes = calculateBytes(text);
+            const counterEl = document.getElementById('byteCounter');
+            const warningEl = document.getElementById('byteWarning');
+            const inputEl = document.getElementById('resultText');
+            
+            counterEl.textContent = `${bytes} / 40 Byte`;
+            if (bytes > 40) {
+                counterEl.classList.replace('bg-blue-100', 'bg-red-100');
+                counterEl.classList.replace('text-blue-800', 'text-red-800');
+                warningEl.classList.remove('hidden');
+                inputEl.classList.replace('border-green-500', 'border-red-500');
+                inputEl.classList.replace('focus:ring-green-400', 'focus:ring-red-400');
+                inputEl.classList.replace('bg-green-50/30', 'bg-red-50/30');
+            } else {
+                counterEl.classList.replace('bg-red-100', 'bg-blue-100');
+                counterEl.classList.replace('text-red-800', 'text-blue-800');
+                warningEl.classList.add('hidden');
+                inputEl.classList.replace('border-red-500', 'border-green-500');
+                inputEl.classList.replace('focus:ring-red-400', 'focus:ring-green-400');
+                inputEl.classList.replace('bg-red-50/30', 'bg-green-50/30');
+            }
+        }
+
+        document.getElementById('resultText').addEventListener('input', (e) => {
+            updateByteCounter(e.target.value);
+            if(window.currentSpecData) window.currentSpecData.standardized_name = e.target.value;
+        });
+
+        document.getElementById('copyBtn').addEventListener('click', () => {
+            const text = document.getElementById('resultText').value;
+            if(!text) return;
+            navigator.clipboard.writeText(text).then(() => {
+                const btn = document.getElementById('copyBtn');
+                btn.innerHTML = '<i class="fa-solid fa-check text-green-600 text-xl"></i>';
+                setTimeout(() => btn.innerHTML = '<i class="fa-regular fa-copy text-xl"></i>', 2000);
+            }).catch(() => {
+                const input = document.getElementById('resultText');
+                input.select(); document.execCommand('copy');
+            });
+        });
+
+        async function fileToBase64(file) {
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.readAsDataURL(file);
+                reader.onload = () => resolve(reader.result.split(',')[1]);
+                reader.onerror = error => reject(error);
+            });
+        }
+
+        window.contractDataList = [];
+        document.getElementById('excelInput').addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                try {
+                    const data = new Uint8Array(e.target.result);
+                    const workbook = XLSX.read(data, {type: 'array'});
+                    const firstSheetName = workbook.SheetNames[0];
+                    const worksheet = workbook.Sheets[firstSheetName];
+                    const json = XLSX.utils.sheet_to_json(worksheet, {header: 1});
+                    window.contractDataList = json.filter(row => row && row.length > 0);
+                    document.getElementById('excelStatus').innerHTML = `<i class="fa-solid fa-check-circle text-green-600"></i> ${window.contractDataList.length}건 데이터 로드 완료`;
+                } catch (err) {
+                    document.getElementById('excelStatus').innerHTML = `<i class="fa-solid fa-triangle-exclamation text-red-500"></i> 엑셀 파일 로드 실패`;
+                }
+            };
+            reader.readAsArrayBuffer(file);
+        });
+
+        function renderUserOptions(options) {
+            const container = document.getElementById('interactiveOptions');
+            const optionsDiv = document.getElementById('optionsContainer');
+            optionsDiv.innerHTML = ''; // 초기화
+
+            if (!options || !Array.isArray(options) || options.length === 0) {
+                container.classList.add('hidden');
+                return;
+            }
+
+            let renderedCount = 0;
+
+            options.forEach(opt => {
+                // 방어 로직: AI가 옵션 배열을 비워두거나 잘못 보낸 경우 해당 박스를 그리지 않고 무시함
+                if (!opt.options || !Array.isArray(opt.options) || opt.options.length === 0) {
+                    return; 
+                }
+
+                // 부모 div 생성 (옵션 그룹)
+                const groupDiv = document.createElement('div');
+                groupDiv.className = 'options-group bg-white p-3 rounded-lg border border-yellow-300 shadow-sm';
+                groupDiv.dataset.key = opt.key || '옵션';
+
+                // 질문 타이틀 생성
+                const p = document.createElement('p');
+                p.className = 'font-semibold text-sm mb-2 text-gray-800 flex items-center gap-2';
+                p.textContent = (opt.question || "추가 선택 항목") + " ";
+
+                // 복수선택 가능 뱃지
+                if (opt.allow_multiple) {
+                    const badge = document.createElement('span');
+                    badge.className = 'text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full';
+                    badge.textContent = '복수선택 가능';
+                    p.appendChild(badge);
+                }
+                groupDiv.appendChild(p);
+
+                // 버튼들을 담을 컨테이너 생성
+                const btnContainer = document.createElement('div');
+                btnContainer.className = 'flex flex-wrap gap-2';
+
+                // 각각의 옵션 버튼 생성
+                opt.options.forEach(val => {
+                    const btn = document.createElement('button');
+                    btn.className = 'opt-btn px-3 py-1.5 bg-gray-100 border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-blue-50 hover:border-blue-500 hover:text-blue-700 transition-colors';
+                    btn.dataset.key = opt.key;
+                    btn.dataset.val = val;
+                    btn.dataset.multi = opt.allow_multiple ? 'true' : 'false';
+                    btn.textContent = val;
+                    btnContainer.appendChild(btn);
+                });
+
+                groupDiv.appendChild(btnContainer);
+                optionsDiv.appendChild(groupDiv);
+                renderedCount++;
+            });
+            
+            // 유효하게 그려진 박스가 1개라도 있을 때만 컨테이너 표시
+            if (renderedCount > 0) {
+                container.classList.remove('hidden');
+            } else {
+                container.classList.add('hidden');
+            }
+
+            // 버튼 클릭 이벤트 바인딩
+            document.querySelectorAll('.opt-btn').forEach(btn => {
+                btn.addEventListener('click', (e) => {
+                    const isMulti = e.target.dataset.multi === 'true';
+                    const groupContainer = e.target.closest('.options-group');
+
+                    if (isMulti) {
+                        e.target.classList.toggle('bg-blue-600');
+                        e.target.classList.toggle('text-white');
+                        e.target.classList.toggle('border-blue-600');
+                        e.target.classList.toggle('bg-gray-100');
+                        e.target.classList.toggle('text-gray-700');
+                    } else {
+                        const siblings = groupContainer.querySelectorAll('button');
+                        siblings.forEach(s => {
+                            s.classList.remove('bg-blue-600', 'text-white', 'border-blue-600');
+                            s.classList.add('bg-gray-100', 'text-gray-700');
+                        });
+                        e.target.classList.add('bg-blue-600', 'text-white', 'border-blue-600');
+                        e.target.classList.remove('bg-gray-100', 'text-gray-700');
+                    }
+
+                    // 옵션을 사양서 데이터에만 추가 (자재명 텍스트 변경 안 함)
+                    let newSpecs = JSON.parse(JSON.stringify(window.currentSpecData.base_specs || []));
+
+                    document.querySelectorAll('.options-group').forEach(group => {
+                        const groupKey = group.dataset.key;
+                        const activeBtns = group.querySelectorAll('button.bg-blue-600');
+                        if (activeBtns.length > 0) {
+                            const vals = Array.from(activeBtns).map(b => b.dataset.val);
+                            const combinedVal = vals.join(', ');
+                            
+                            let existingSpec = newSpecs.find(s => s.key === groupKey);
+                            if (existingSpec) {
+                                existingSpec.value = combinedVal;
+                            } else {
+                                newSpecs.push({key: groupKey, value: combinedVal});
+                            }
+                        }
+                    });
+                    window.currentSpecData.spec_details = newSpecs;
+                });
+            });
+        }
+
+        document.getElementById('processBtn').addEventListener('click', async () => {
+            const rawInput = document.getElementById('rawInput').value.trim();
+            const shopLink = document.getElementById('shopLink').value.trim();
+            const isPart = document.getElementById('isPart').checked;
+
+            if (!rawInput && !shopLink) {
+                alert("자재 내역 또는 링크를 최소 하나 이상 입력해주세요.");
+                return;
+            }
+
+            let filteredExcelContext = "";
+            if (window.contractDataList && window.contractDataList.length > 0 && rawInput) {
+                const keywords = rawInput.split(/\s+/).filter(k => k.trim().length > 0);
+                const matchedRows = window.contractDataList.filter(row => {
+                    const rowString = row.map(cell => cell != null ? String(cell) : '').join('').replace(/\s/g, '').toLowerCase();
+                    return keywords.some(k => k.length > 0 && rowString.includes(k.replace(/\s/g, '').toLowerCase()));
+                }).slice(0, 10);
+
+                if (matchedRows.length > 0) {
+                    filteredExcelContext = "\n\n[계약단가표 검색 결과 (필독)]\n아래는 엑셀에서 검색된 내용입니다. 사용자가 찾는 자재와 정확히 일치하면 is_contract_item: true로 응답하고, '자재코드(contract_code)'와 엑셀에 표기된 '품명(standardized_name)'을 찾아 기재하세요.\n" + 
+                    matchedRows.map(r => r.map(c => c != null ? String(c) : '').join(' | ')).join('\n');
+                }
+            }
+
+            document.getElementById('resultsSection').classList.add('hidden');
+            document.getElementById('interactiveOptions').classList.add('hidden');
+            document.getElementById('loadingSection').classList.replace('hidden', 'flex');
+            document.getElementById('processBtn').disabled = true;
+
+            try {
+                const apiUrl = "/.netlify/functions/gemini";
+
+                const systemPrompt = `당신은 구매팀 자재 표준화 및 검색 담당자입니다.
+다음 규칙을 엄격히 적용하여 자재를 표준화하세요:
+1. 형식 및 순서: 제품명(색상)/구매사품명(품번),용량,단위,세부스펙/메이커 (반드시 항목 사이에 '/' 사용)
+   (예: 슬링벨트/25mmx4m(835-6482),0.8T/스마토) 
+2. 길이: 40바이트 이내 (한글2, 영문1)
+3. 외국어: 가능한 한국어 표기
+6. 공구류: 인터넷 검색을 통해 해당 상품의 크레텍(CTX) 등 7자리 공구코드(예: 835-6482)를 찾아 품번 옆 괄호에 병기. (필수)
+11. 부품: 기존상품 품명 같이 작성
+
+특수 상황 지침 (매우 중요):
+[코드 및 계약품목 판별 주의사항 - 매우 중요]
+1. 코드 구분: '000-0000' 형식(7자리)은 카탈로그에서 조회되는 **공구코드**이며, 6자리 숫자는 사내 **자재코드**입니다.
+2. 공구코드가 있다고 해서 자재코드가 존재하는 것은 아니며, 공구코드나 자재코드가 발견되었다고 해서 무조건 '계약품목'인 것은 절대 아닙니다.
+3. is_contract_item: 오직 하단에 [계약단가표 검색 결과]가 주어지고 그 안에서 정확히 일치하는 자재를 찾았을 때만 true로 설정하세요. 엑셀 결과가 없거나 일치하지 않으면 무조건 false입니다.
+4. contract_code: 엑셀에서 찾은 6자리 자재코드만 입력하세요. 7자리 공구코드는 절대 이 필드에 넣지 말고, 가이드라인 6번에 따라 standardized_name의 품번 옆 괄호에만 기재하세요.
+
+[객관식 옵션(user_options) 생성 규칙 - 매우 중요]
+1. 발주 시 자재를 완벽히 특정하지 못하면 오발주가 발생합니다. 사용자가 입력한 내역을 분석하여, **해당 자재를 오차 없이 구매하기 위해 추가로 확인이 필요한 "모든" 누락된 규격(예: 양끝단 형태(아이형/엔드리스형), 재질, 상세 하중, 체결 방식, 전압, 추가 부속품 등)을 빠짐없이 user_options로 생성**하여 질문하세요.
+2. 단, 사용자가 이미 기입한 규격(예: 4m, 25mm 등)은 절대 중복 질문하지 마세요.
+3. 구체적인 스펙 없이 포괄적인 단어('임팩트', '북스캐너')만 입력된 경우, 범용적인 필수 스펙(유무선, 척 사이즈, 전압 등)을 선택하도록 반드시 유도하세요.
+4. "추가 옵션"이나 "액세서리"처럼 여러 개를 동시에 선택할 수 있는 항목은 allow_multiple: true 로 설정하세요.
+5. **각 질문의 options 항목은 반드시 2개 이상의 선택지(문자열 배열)를 가져야 합니다. 빈 배열은 절대 허용하지 않습니다.**
+
+검색(google_search) 툴 활용 지침:
+1. 단종 여부 및 쇼핑몰 구매 링크(네이버쇼핑, 11번가, 아마존 등) 검색. 단종 시 대체품 제안.
+2. 구매 단위(EA, PCS, BOX, SET 등) 파악 및 purchase_unit 항목에 필수 작성 (누락 금지). 묶음 수량(1BOX=50EA) 파악.
+3. (초집중 요망 - 정확한 메이커/모델 사진 매칭) 이미지(image_url): 사양서에 제품 사진이 무조건 들어가야 합니다. **특히 사용자가 특정 '제조사(메이커)'나 '모델명(품번)'을 명시했거나 AI가 특정 브랜드로 표준화했다면, 구글 이미지 검색 등을 통해 "반드시 해당 제조사의 해당 모델" 사진을 찾아야 합니다. (예: '스마토' 제품을 찾는데 'SIMSTOOL'이나 타사 브랜드 사진을 넣으면 절대 안 됨).** 제조사와 규격이 정확히 일치하는, 제품 단독 형태가 가장 잘 보이는 고해상도 대표 누끼컷(배경 흰색) URL을 엄선하세요. 텍스트가 많이 적힌 배송안내, 반품/교환 안내, 혹은 상품 설명이 길게 적힌 배너 이미지는 "무조건" 피하세요. 오직 '제품 그 자체'가 찍힌 사진이어야 합니다.`;
+
+                let promptText = `입력내역: "${rawInput}"\n`;
+                if(shopLink) promptText += `참고링크: "${shopLink}"\n`;
+                if(isPart) promptText += `조건: 이 자재는 기기의 부품입니다.\n`;
+                if(filteredExcelContext) promptText += filteredExcelContext;
+
+                const parts = [{ text: promptText }];
+                
+                const payload = {
+                    contents: [{ role: "user", parts: parts }],
+                    tools: [{ "google_search": {} }],
+                    systemInstruction: { parts: [{ text: systemPrompt }] },
+                    generationConfig: {
+                        responseMimeType: "application/json",
+                        responseSchema: {
+                            type: "OBJECT",
+                            properties: {
+                                "standardized_name": { type: "STRING" },
+                                "is_contract_item": { type: "BOOLEAN" },
+                                "contract_code": { type: "STRING" },
+                                "reasoning": { type: "STRING" },
+                                "is_discontinued": { type: "BOOLEAN" },
+                                "discontinued_info": { type: "STRING" },
+                                "alternative_product_name": { type: "STRING" },
+                                "alternative_reason": { type: "STRING" },
+                                "alternative_link": { type: "STRING" },
+                                "purchase_unit": { type: "STRING" },
+                                "is_bundled": { type: "BOOLEAN" },
+                                "bundle_warning": { type: "STRING" },
+                                "image_url": { type: "STRING" },
+                                "description": { type: "STRING" },
+                                "spec_details": {
+                                    type: "ARRAY",
+                                    items: {
+                                        type: "OBJECT",
+                                        properties: { "key": { type: "STRING" }, "value": { type: "STRING" } }
+                                    }
+                                },
+                                "purchase_links": {
+                                    type: "ARRAY",
+                                    items: {
+                                        type: "OBJECT",
+                                        properties: { "mall_name": { type: "STRING" }, "url": { type: "STRING" } }
+                                    }
+                                },
+                                "user_options": {
+                                    type: "ARRAY",
+                                    items: {
+                                        type: "OBJECT",
+                                        properties: {
+                                            "question": { type: "STRING" },
+                                            "key": { type: "STRING" },
+                                            "allow_multiple": { type: "BOOLEAN" },
+                                            "options": { type: "ARRAY", items: { type: "STRING" } }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                };
+
+                const response = await fetch(apiUrl, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+
+                if (!response.ok) {
+                    const errData = await response.text();
+                    console.error("Server Error Response:", errData);
+                    let detail = "";
+                    try { detail = JSON.parse(errData).error || ""; } catch (_) {}
+                    throw new Error(detail || `서버 통신 오류 (상태 코드: ${response.status})`);
+                }
+
+                const data = await response.json();
+                
+                // 1. AI 응답 데이터가 아예 없는 경우 예외 처리
+                if (!data.candidates || data.candidates.length === 0) {
+                    throw new Error("AI가 응답을 반환하지 않았습니다.");
+                }
+                
+                const candidate = data.candidates[0];
+                
+                // 2. 보안 필터 등 AI 차단 사유 확인 (매우 중요)
+                if (candidate.finishReason && candidate.finishReason !== 'STOP') {
+                    console.warn("Generation stopped with reason:", candidate.finishReason);
+                    if (candidate.finishReason === 'SAFETY') {
+                        throw new Error("입력하신 내용이나 링크가 구글 AI의 안전/보안 필터에 의해 차단되었습니다. (특정 쇼핑몰 링크의 경우 로봇 차단으로 인해 발생할 수 있습니다.) 다른 링크나 검색어를 사용해주세요.");
+                    } else if (candidate.finishReason === 'MAX_TOKENS') {
+                        throw new Error("AI 응답이 너무 길어 중간에 끊겼습니다. 검색 내용을 줄여주세요.");
+                    } else {
+                        throw new Error(`AI 응답이 중단되었습니다. (사유: ${candidate.finishReason})`);
+                    }
+                }
+
+                // 3. 정상적인 데이터 본문이 없는 경우
+                if (!candidate.content || !candidate.content.parts || candidate.content.parts.length === 0) {
+                    throw new Error("AI가 유효한 텍스트를 생성하지 못했습니다.");
+                }
+
+                let resultText = candidate.content.parts[0].text;
+                
+                let result;
+                try {
+                    // 1차 시도: Markdown 백틱 제거 및 깔끔한 파싱
+                    let cleanText = resultText.replace(/^```(json)?\s*/i, '').replace(/\s*```$/i, '').trim();
+                    result = JSON.parse(cleanText);
+                } catch (parseError) {
+                    // 2차 시도: 정규식으로 중괄호 {} 내부만 강제로 뜯어내서 파싱 (철벽 방어)
+                    try {
+                        const jsonMatch = resultText.match(/\{[\s\S]*\}/);
+                        if (jsonMatch) {
+                            result = JSON.parse(jsonMatch[0]);
+                        } else {
+                            throw new Error("JSON 데이터 블록을 찾을 수 없습니다.");
+                        }
+                    } catch (e2) {
+                        console.error("AI 원본 응답 텍스트 (파싱 실패):", resultText);
+                        throw new Error("AI가 반환한 데이터를 해석할 수 없습니다. 검색어를 약간 변경하여 다시 시도해주세요.");
+                    }
+                }
+                
+                // --- AI Hallucination Guard (강력한 계약품목 안전장치) ---
+                // 1. 엑셀 데이터가 업로드/검색되지 않았다면 무조건 계약품목이 아님
+                if (!filteredExcelContext) {
+                    result.is_contract_item = false;
+                }
+                // 2. AI가 실수로 7자리 공구코드(예: 835-6482)를 자재코드 필드에 넣고 계약품목이라고 오판할 경우 원천 차단
+                if (result.contract_code && typeof result.contract_code === 'string' && result.contract_code.includes('-')) {
+                    result.is_contract_item = false;
+                    result.contract_code = ""; // 공구코드는 자재코드가 아니므로 초기화
+                }
+                // -----------------------------------------------------
+
+                result.standardized_name = result.standardized_name || "자재명 확인필요";
+                result.contract_code = result.contract_code || "코드미상";
+                result.base_specs = JSON.parse(JSON.stringify(result.spec_details || []));
+                window.currentSpecData = result;
+
+                const resultInput = document.getElementById('resultText');
+                const byteCounter = document.getElementById('byteCounter');
+                
+                if (result.is_contract_item) {
+                    resultInput.value = `[계약품목] ${result.contract_code} / ${result.standardized_name}`;
+                    byteCounter.classList.add('hidden');
+                    document.getElementById('reasoningText').innerHTML = `<strong class="text-blue-700"><i class="fa-solid fa-file-contract"></i> 계약 단가표 일치 품목</strong><br>엑셀 파일에서 일치하는 자재를 찾아 자재코드를 추출했습니다.<br>• <strong>자재코드:</strong> <span class="text-red-600 font-bold">${result.contract_code}</span><br>• <strong>계약자재명:</strong> ${result.standardized_name}`;
+                    document.getElementById('interactiveOptions').classList.add('hidden');
+                } else {
+                    resultInput.value = result.standardized_name;
+                    byteCounter.classList.remove('hidden');
+                    updateByteCounter(result.standardized_name);
+                    document.getElementById('reasoningText').textContent = result.reasoning || "표준화 가이드라인에 따라 정리되었습니다.";
+                    renderUserOptions(result.user_options);
+                }
+
+                const safePurchaseUnit = result.purchase_unit || 'EA (확인 필요)';
+                let unitHtml = `<div class="font-bold text-lg text-purple-700">권장 구매 단위: ${safePurchaseUnit}</div>`;
+                if (result.is_bundled) {
+                    unitHtml += `<div class="mt-2 p-2 bg-yellow-100 border-l-4 border-yellow-500 text-yellow-800 text-xs font-semibold rounded"><i class="fa-solid fa-triangle-exclamation mr-1"></i> 묶음 유통 제품: ${result.bundle_warning}</div>`;
+                }
+                document.getElementById('unitInfo').innerHTML = unitHtml;
+
+                let marketHtml = '';
+                if (result.is_discontinued) {
+                    marketHtml += `<div class="p-3 bg-red-50 border border-red-200 rounded-lg mb-3">
+                        <div class="font-bold flex items-center gap-1 mb-1 text-red-800"><i class="fa-solid fa-ban"></i> 단종된 자재입니다.</div>
+                        <p class="text-xs text-red-700">${result.discontinued_info || '단종 정보가 없습니다.'}</p>
+                    </div>`;
+                    if (result.alternative_product_name) {
+                        marketHtml += `<div class="p-3 mt-3 bg-emerald-50 border border-emerald-200 rounded-lg">
+                            <h4 class="font-bold text-emerald-800 text-sm mb-1"><i class="fa-solid fa-code-compare"></i> 추천 대체품</h4>
+                            <p class="text-emerald-700 font-semibold mb-1">${result.alternative_product_name}</p>
+                            <p class="text-emerald-600 text-xs mb-2">${result.alternative_reason || ''}</p>
+                            ${result.alternative_link ? `<a href="${result.alternative_link}" target="_blank" class="inline-flex items-center text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 py-1.5 px-3 rounded shadow-sm"><i class="fa-solid fa-arrow-up-right-from-square mr-1.5"></i> 구매 링크 확인</a>` : ''}
+                        </div>`;
+                    }
+                } else {
+                    marketHtml += `<div class="p-2 mb-2 bg-green-100 text-green-800 rounded font-semibold"><i class="fa-regular fa-circle-check mr-1"></i> 유통중인 자재입니다.</div>`;
+                    if (result.purchase_links && result.purchase_links.length > 0) {
+                        marketHtml += `<ul class="space-y-2 mt-3">`;
+                        result.purchase_links.forEach(link => {
+                            marketHtml += `<li><a href="${link.url}" target="_blank" class="inline-flex items-center text-blue-600 hover:underline"><i class="fa-solid fa-cart-shopping w-5"></i><span class="ml-1">${link.mall_name}</span></a></li>`;
+                        });
+                        marketHtml += `</ul>`;
+                    }
+                }
+                document.getElementById('marketInfo').innerHTML = marketHtml;
+
+                document.getElementById('openSpecSheetBtn').onclick = () => {
+                    const currentData = window.currentSpecData;
+                    document.getElementById('currentDate').innerText = new Date().toISOString().split('T')[0];
+                    document.getElementById('specTitle').innerText = document.getElementById('resultText').value || '자재명';
+                    document.getElementById('specDescription').innerText = currentData.description || '';
+                    
+                    const specImage = document.getElementById('specImage');
+                    
+                    // 이미지 오류 시 무한 루프를 막고 깔끔한 기본 이미지(제품명 텍스트)를 보여줍니다.
+                    specImage.onerror = null; 
+                    
+                    if (currentData.image_url) {
+                        specImage.src = currentData.image_url;
+                        specImage.onerror = function() {
+                            this.onerror = null; // 한 번 실패하면 더 이상 재시도 안 함
+                            this.src = `https://placehold.co/320x320/f8fafc/334155?text=${encodeURIComponent(currentData.standardized_name || '이미지 없음')}`;
+                        };
+                    } else {
+                        specImage.src = `https://placehold.co/320x320/f8fafc/334155?text=${encodeURIComponent(currentData.standardized_name || '이미지 없음')}`;
+                    }
+
+                    const tbody = document.getElementById('specTableBody');
+                    tbody.innerHTML = '';
+                    
+                    if (currentData.is_contract_item) {
+                        tbody.innerHTML += `
+                            <tr><th class="bg-blue-50 text-blue-900">구분</th><td class="font-bold text-blue-700">계약 단가표 품목</td></tr>
+                            <tr><th class="bg-blue-50 text-blue-900">자재코드</th><td class="font-bold text-xl text-red-600">${currentData.contract_code}</td></tr>
+                            <tr><th class="bg-blue-50 text-blue-900">계약자재명</th><td class="font-semibold text-gray-800">${currentData.standardized_name}</td></tr>
+                        `;
+                    } else {
+                        // 사양서 표에는 자재명 텍스트 박스에 있는 내용(사용자가 수정한 내용 포함)을 그대로 표시
+                        tbody.innerHTML += `<tr><th>표준화 제품명</th><td class="font-bold text-blue-700">${document.getElementById('resultText').value}</td></tr>`;
+                        if (currentData.spec_details) {
+                            currentData.spec_details.forEach(spec => {
+                                // 테이블 생성 시에도 특수문자 깨짐 방지를 위해 DOM 처리
+                                const tr = document.createElement('tr');
+                                const th = document.createElement('th');
+                                th.textContent = spec.key;
+                                const td = document.createElement('td');
+                                td.textContent = spec.value;
+                                tr.appendChild(th);
+                                tr.appendChild(td);
+                                tbody.appendChild(tr);
+                            });
+                        }
+                    }
+
+                    const safeUnit = currentData.purchase_unit || 'EA';
+                    let quantityHtml = `<span class="font-extrabold text-blue-600 text-base">1 ${safeUnit}</span>`;
+                    if (currentData.is_bundled) {
+                        quantityHtml += `<span class="text-xs font-normal text-orange-600 ml-2 bg-orange-100 px-2 py-1 rounded"><i class="fa-solid fa-circle-info"></i> ${currentData.bundle_warning}</span>`;
+                    }
+                    // 마지막 줄 삽입
+                    tbody.insertAdjacentHTML('beforeend', `<tr><th>구매 요청 수량</th><td>${quantityHtml}</td></tr>`);
+
+                    document.getElementById('mainView').classList.add('hidden');
+                    document.getElementById('specSheetView').classList.remove('hidden');
+                    document.getElementById('specSheetView').classList.add('flex');
+                };
+
+                document.getElementById('backBtn').onclick = () => {
+                    document.getElementById('specSheetView').classList.add('hidden');
+                    document.getElementById('specSheetView').classList.remove('flex');
+                    document.getElementById('mainView').classList.remove('hidden');
+                };
+
+                // Manual Image Upload for Spec Sheet
+                document.getElementById('specImageUpload').onchange = async (e) => {
+                    const file = e.target.files[0];
+                    if (file) {
+                        try {
+                            const base64 = await fileToBase64(file);
+                            document.getElementById('specImage').src = `data:${file.type};base64,${base64}`;
+                        } catch (err) {
+                            alert('이미지를 불러오는데 실패했습니다.');
+                        }
+                    }
+                };
+
+                document.getElementById('loadingSection').classList.replace('flex', 'hidden');
+                document.getElementById('resultsSection').classList.remove('hidden');
+
+            } catch (error) {
+                console.error("API Error:", error);
+                alert(`처리 중 오류가 발생했습니다.\n상세 사유: ${error.message}\n내역을 조금 수정하여 다시 시도해주세요.`);
+                document.getElementById('loadingSection').classList.replace('flex', 'hidden');
+            } finally {
+                document.getElementById('processBtn').disabled = false;
+            }
+        });
+    </script>
+</body>
+</html>
